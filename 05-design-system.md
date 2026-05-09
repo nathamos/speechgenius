@@ -97,7 +97,7 @@ height: 48px
 display: flex, align-items: center, justify-content: space-between
 ```
 
-Left: Site name ("Vows & Verses") — `--font-display`, 12px
+Left: Site name ("WeddingGenius") — `--font-display`, 12px
 Right: User email + "Sign out" — `--font-body`, 12px, `--color-pale-ash`
 
 ### Speech Banner

@@ -96,7 +96,7 @@ A small popover that appears above the user's selection.
 | State | Display |
 |---|---|
 | `available` | "Annotate" button (black, sharp corners) |
-| `claimed` | "Already annotated — click to view" (grey, no button) |
+| `claimed` | "Already annotated — click to add a comment" (grey, no button) — clicking opens the sidebar to the existing annotation's comment thread |
 
 ### Positioning
 

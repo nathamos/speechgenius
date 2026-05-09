@@ -159,4 +159,4 @@ Real-time annotation updates (new annotations from other guests) are subscribed 
 |---|---|
 | No stanzas | "This speech has no transcript yet." centered in transcript area |
 | No annotations | Sidebar empty state: "Be the first to annotate this speech." with arrow pointing to transcript |
-| User not logged in | Sidebar shows "Sign in to annotate" instead of highlight toolbar |
+| User not logged in | Highlight toolbar does not appear; sidebar shows "Sign in to annotate" — reading annotations is still available |
