@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas-white: #ffffff;
+  --color-ink-black:    #000000;
+  --color-graphite:     #282828;
+  --color-pale-ash:     #dcdcdc;
+  --color-blush-tone:   #efc4b2;
+
+  --font-display: ui-sans-serif, system-ui, sans-serif;
+  --font-body:    -apple-system, ui-sans-serif, system-ui, sans-serif;
+
+  --radius: 0px;
+  --spacing: 8px;
+}
+
+/* custom_21879 display font — place file at public/fonts/custom_21879.woff2
+   then declare via next/font/local in app/layout.tsx and replace --font-display above */

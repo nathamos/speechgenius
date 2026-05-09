@@ -1,0 +1,99 @@
+import Link from 'next/link'
+import { createClient } from '@/lib/supabase/server'
+
+interface WeddingRow {
+  id: string
+  title: string
+  slug: string
+  date: string | null
+  join_mode: string
+  speechCount: number
+}
+
+function accessLabel(joinMode: string): string {
+  if (joinMode === 'open') return 'Open'
+  if (joinMode === 'password') return 'Password'
+  return 'Invite only'
+}
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return ''
+  return new Date(dateStr).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
+export default async function WeddingsPage() {
+  const supabase = await createClient()
+
+  const { data: rawWeddings } = await supabase
+    .from('weddings')
+    .select('id, title, slug, date, join_mode, created_at')
+    .order('created_at', { ascending: false })
+
+  // Fetch live speech counts grouped by wedding_id
+  const { data: speechRows } = await supabase
+    .from('speeches')
+    .select('wedding_id')
+    .eq('status', 'live')
+
+  const speechCountMap: Record<string, number> = {}
+  for (const row of speechRows ?? []) {
+    speechCountMap[row.wedding_id] = (speechCountMap[row.wedding_id] ?? 0) + 1
+  }
+
+  const weddings: WeddingRow[] = (rawWeddings ?? []).map((w) => ({
+    id: w.id,
+    title: w.title,
+    slug: w.slug,
+    date: w.date,
+    join_mode: w.join_mode,
+    speechCount: speechCountMap[w.id] ?? 0,
+  }))
+
+  return (
+    <main className="px-4 pt-8 pb-16 max-w-[1100px] mx-auto">
+      <h1 className="font-display tracking-[-0.047em] text-ink-black mb-6" style={{ fontSize: '32px', lineHeight: '1.1' }}>
+        Weddings
+      </h1>
+
+      {weddings.length === 0 ? (
+        <p className="font-body text-sm text-pale-ash">No weddings yet.</p>
+      ) : (
+        <div className="grid grid-cols-1 gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+          {weddings.map((wedding) => (
+            <Link
+              key={wedding.id}
+              href={`/weddings/${wedding.slug}/join`}
+              className="block border border-pale-ash p-4 no-underline hover:border-ink-black transition-colors"
+            >
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <span className="font-display tracking-[-0.047em] text-ink-black" style={{ fontSize: '18px', lineHeight: '1.2' }}>
+                  {wedding.title}
+                </span>
+                <span className="font-display text-xs tracking-[-0.047em] text-pale-ash shrink-0 border border-pale-ash px-1.5 py-0.5">
+                  {accessLabel(wedding.join_mode)}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {wedding.date && (
+                  <span className="font-body text-xs text-pale-ash">
+                    {formatDate(wedding.date)}
+                  </span>
+                )}
+                <span className="font-body text-xs text-pale-ash">
+                  {wedding.speechCount === 1
+                    ? '1 speech'
+                    : `${wedding.speechCount} speeches`}
+                </span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </main>
+  )
+}
