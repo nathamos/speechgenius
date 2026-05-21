@@ -24,8 +24,22 @@ interface AnnotationFormProps {
 async function uploadAnnotationMedia(file: File, speechId: string): Promise<string | null> {
   const ext = file.name.split('.').pop() ?? 'jpg'
   const path = `${speechId}/${crypto.randomUUID()}.${ext}`
-  const { error } = await supabase.storage.from('annotation-media').upload(path, file)
-  if (error) return null
+
+  const res = await fetch('/api/signed-upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bucket: 'annotation-media', path }),
+  })
+  const json = await res.json()
+  if (!res.ok) return null
+
+  const uploadRes = await fetch(json.signedUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': file.type },
+    body: file,
+  })
+  if (!uploadRes.ok) return null
+
   return path
 }
 

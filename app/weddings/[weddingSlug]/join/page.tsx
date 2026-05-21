@@ -1,5 +1,7 @@
 import { notFound, redirect } from 'next/navigation'
+import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
+import { weddingCookieName } from '@/lib/wedding-cookie'
 import PasswordForm from './_PasswordForm'
 
 interface Props {
@@ -22,10 +24,8 @@ export default async function JoinPage({ params, searchParams }: Props) {
 
   if (!wedding) notFound()
 
-  // Open weddings need no join step — access is implicit
-  if (wedding.join_mode === 'open') {
-    redirect(destination)
-  }
+  // Open weddings need no join step
+  if (wedding.join_mode === 'open') redirect(destination)
 
   // Invite-only wedding
   if (wedding.join_mode === 'invite') {
@@ -43,25 +43,23 @@ export default async function JoinPage({ params, searchParams }: Props) {
     )
   }
 
-  // Password-protected wedding — check auth before showing the form
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) {
-    const loginNext = `/weddings/${weddingSlug}/join${next ? `?next=${encodeURIComponent(next)}` : ''}`
-    redirect(`/login?next=${encodeURIComponent(loginNext)}`)
-  }
+  // Password-protected wedding
+  const { data: { user } } = await supabase.auth.getUser()
 
   // Already a member? Skip straight through
-  const { data: existingMember } = await supabase
-    .from('wedding_members')
-    .select('id')
-    .eq('wedding_id', wedding.id)
-    .eq('user_id', user.id)
-    .maybeSingle()
+  if (user) {
+    const { data: existingMember } = await supabase
+      .from('wedding_members')
+      .select('id')
+      .eq('wedding_id', wedding.id)
+      .eq('user_id', user.id)
+      .maybeSingle()
+    if (existingMember) redirect(destination)
+  }
 
-  if (existingMember) {
+  // Already have the session cookie? Skip straight through
+  const cookieStore = await cookies()
+  if (cookieStore.get(weddingCookieName(wedding.id))?.value === '1') {
     redirect(destination)
   }
 
@@ -69,7 +67,9 @@ export default async function JoinPage({ params, searchParams }: Props) {
     <PasswordForm
       weddingId={wedding.id}
       weddingTitle={wedding.title}
+      weddingSlug={weddingSlug}
       next={destination}
+      isAuthenticated={!!user}
     />
   )
 }

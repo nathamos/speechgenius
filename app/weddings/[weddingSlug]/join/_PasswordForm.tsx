@@ -1,16 +1,19 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { joinWithPassword } from './_actions'
 
 interface Props {
   weddingId: string
   weddingTitle: string
+  weddingSlug: string
   next: string
+  isAuthenticated: boolean
 }
 
-export default function PasswordForm({ weddingId, weddingTitle, next }: Props) {
+export default function PasswordForm({ weddingId, weddingTitle, weddingSlug, next, isAuthenticated }: Props) {
   const router = useRouter()
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -29,7 +32,6 @@ export default function PasswordForm({ weddingId, weddingTitle, next }: Props) {
       return
     }
 
-    // Server action redirects on success; if we reach here something unexpected happened
     router.refresh()
   }
 
@@ -40,7 +42,9 @@ export default function PasswordForm({ weddingId, weddingTitle, next }: Props) {
           {weddingTitle}
         </h1>
         <p className="font-body text-sm text-pale-ash mb-6">
-          This wedding is password-protected. Enter the password to access its speeches.
+          {isAuthenticated
+            ? 'This wedding is password-protected. Enter the password to access its speeches.'
+            : 'This wedding is password-protected. Enter the password to view, or sign in to save your access.'}
         </p>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
@@ -71,9 +75,21 @@ export default function PasswordForm({ weddingId, weddingTitle, next }: Props) {
             disabled={loading}
             className="bg-ink-black text-canvas-white font-display text-xs tracking-[-0.047em] px-5 py-2.5 border-none cursor-pointer hover:bg-graphite disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {loading ? 'Joining…' : 'Join'}
+            {loading ? 'Entering…' : isAuthenticated ? 'Join' : 'View'}
           </button>
         </form>
+
+        {!isAuthenticated && (
+          <p className="font-body text-xs text-pale-ash mt-4">
+            <Link
+              href={`/login?next=${encodeURIComponent(`/weddings/${weddingSlug}/join?next=${encodeURIComponent(next)}`)}`}
+              className="text-ink-black underline"
+            >
+              Sign in
+            </Link>
+            {' '}to save your access permanently.
+          </p>
+        )}
       </div>
     </main>
   )

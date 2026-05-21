@@ -15,11 +15,9 @@ export default function Nav({ user }: { user: User | null }) {
 
   return (
     <nav className="sticky top-0 z-10 flex h-6 items-center justify-between border-b border-pale-ash bg-canvas-white px-4">
-      <Link
-        href="/"
-        className="font-display text-xs tracking-[-0.047em] text-ink-black no-underline"
-      >
-        WeddingGenius
+      <Link href="/" className="no-underline flex items-center">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo.png" alt="WeddingGenius" style={{ height: 80, width: 'auto' }} />
       </Link>
 
       <div className="flex items-center gap-3">

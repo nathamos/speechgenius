@@ -27,7 +27,7 @@ export default function LoginPage() {
     })
 
     if (error) {
-      setError('Something went wrong. Please try again.')
+      setError(error.message)
       setLoading(false)
       return
     }

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
 import type { Tables } from '@/lib/supabase/types'
@@ -186,6 +187,28 @@ function RichTextBody({ json }: { json: string | null }) {
 // Main sidebar
 // ---------------------------------------------------------------------------
 
+function bodyToPlainText(json: string | null): string {
+  if (!json) return ''
+  try {
+    const doc = JSON.parse(json) as TiptapNode
+    function extract(node: TiptapNode): string {
+      if (node.type === 'text') return node.text ?? ''
+      const children = (node.content ?? []).map(extract).join('')
+      return node.type === 'paragraph' ? children + '\n' : children
+    }
+    return extract(doc).trim()
+  } catch {
+    return json
+  }
+}
+
+function plainTextToBody(text: string): string {
+  return JSON.stringify({
+    type: 'doc',
+    content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+  })
+}
+
 export default function AnnotationSidebar({
   activeAnnotationId,
   user,
@@ -197,6 +220,10 @@ export default function AnnotationSidebar({
   const [postingComment, setPostingComment] = useState(false)
   const [userVote, setUserVote] = useState<number | null>(null)
   const [voteCount, setVoteCount] = useState(0)
+  const [editingBody, setEditingBody] = useState(false)
+  const [editBodyText, setEditBodyText] = useState('')
+  const [savingBody, setSavingBody] = useState(false)
+  const [showSignInPrompt, setShowSignInPrompt] = useState(false)
   const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
   // Fetch annotation detail when activeAnnotationId changes
@@ -211,6 +238,30 @@ export default function AnnotationSidebar({
     setAnnotation(null)
 
     async function load() {
+      if (!user) {
+        // Guest (cookie-based access): RLS blocks table queries, use bypass RPC
+        const { data: rows } = await supabase.rpc('get_full_annotation', {
+          p_annotation_id: activeAnnotationId!,
+        })
+        const raw = (rows as unknown as FullAnnotation[] | null)?.[0]
+        if (!raw) { setLoading(false); return }
+
+        // Profiles are publicly readable — resolve display names for guests too
+        const authorDisplay = await fetchDisplayName(raw.author_id)
+        const comments: Comment[] = await Promise.all(
+          ((raw.comments ?? []) as Comment[]).map(async (c) => ({
+            ...c,
+            authorDisplay: await fetchDisplayName(c.author_id),
+          }))
+        )
+
+        setAnnotation({ ...raw, authorDisplay, comments })
+        setVoteCount(raw.upvotes ?? 0)
+        setLoading(false)
+        return
+      }
+
+      // Authenticated user: regular RLS-protected fetch
       const { data, error } = await supabase
         .from('annotations')
         .select('*, votes:annotation_votes(value, user_id), comments:annotation_comments(*)')
@@ -223,10 +274,8 @@ export default function AnnotationSidebar({
         return
       }
 
-      // Enrich author display name
       const authorDisplay = await fetchDisplayName(data.author_id)
 
-      // Enrich comment authors
       const comments: Comment[] = await Promise.all(
         ((data.comments ?? []) as Comment[]).map(async (c) => ({
           ...c,
@@ -244,13 +293,8 @@ export default function AnnotationSidebar({
       setAnnotation(full)
       setVoteCount(data.upvotes ?? 0)
 
-      // Set user's current vote
-      if (user) {
-        const myVote = (data.votes ?? []).find(
-          (v: Vote) => v.user_id === user.id
-        )
-        setUserVote(myVote ? myVote.value : null)
-      }
+      const myVote = (data.votes ?? []).find((v: Vote) => v.user_id === user.id)
+      setUserVote(myVote ? myVote.value : null)
 
       setLoading(false)
     }
@@ -258,15 +302,14 @@ export default function AnnotationSidebar({
     load()
   }, [activeAnnotationId, user])
 
-  // Realtime: subscribe to new comments for the open annotation
+  // Realtime: subscribe to new comments for the open annotation (auth'd users only)
   useEffect(() => {
-    // Cleanup old channel
     if (realtimeChannelRef.current) {
       supabase.removeChannel(realtimeChannelRef.current)
       realtimeChannelRef.current = null
     }
 
-    if (!activeAnnotationId) return
+    if (!activeAnnotationId || !user) return
 
     const channel = supabase
       .channel(`annotation:${activeAnnotationId}`)
@@ -363,6 +406,31 @@ export default function AnnotationSidebar({
     setPostingComment(false)
   }, [user, activeAnnotationId, commentText, postingComment, annotation])
 
+  // Reset edit state when annotation changes
+  useEffect(() => {
+    setEditingBody(false)
+    setEditBodyText('')
+  }, [activeAnnotationId])
+
+  const handleEditBodyOpen = useCallback(() => {
+    if (!annotation) return
+    setEditBodyText(bodyToPlainText(annotation.body))
+    setEditingBody(true)
+  }, [annotation])
+
+  const handleSaveBody = useCallback(async () => {
+    if (!activeAnnotationId || !editBodyText.trim()) return
+    setSavingBody(true)
+    const newBody = plainTextToBody(editBodyText.trim())
+    await supabase
+      .from('annotations')
+      .update({ body: newBody, updated_at: new Date().toISOString() })
+      .eq('id', activeAnnotationId)
+    setAnnotation((prev) => prev ? { ...prev, body: newBody } : prev)
+    setEditingBody(false)
+    setSavingBody(false)
+  }, [activeAnnotationId, editBodyText])
+
   // Reviewer: remove annotation
   const handleRemoveAnnotation = useCallback(async () => {
     if (!activeAnnotationId) return
@@ -413,19 +481,57 @@ export default function AnnotationSidebar({
             {annotation.selected_text}
           </blockquote>
 
-          {/* Hero image if present */}
+          {/* Hero image if present — media_url is a storage path, convert to public URL */}
           {annotation.media_url && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={annotation.media_url}
+              src={supabase.storage.from('annotation-media').getPublicUrl(annotation.media_url).data.publicUrl}
               alt=""
               className="w-full mb-4"
             />
           )}
 
-          {/* Rich text body */}
+          {/* Body — editable by the author */}
           <div className="mb-4">
-            <RichTextBody json={annotation.body} />
+            {editingBody ? (
+              <div className="flex flex-col gap-2">
+                <textarea
+                  value={editBodyText}
+                  onChange={(e) => setEditBodyText(e.target.value)}
+                  rows={6}
+                  className="w-full border border-pale-ash p-2 font-body text-ink-black focus:border-ink-black outline-none resize-none"
+                  style={{ fontSize: '14px', lineHeight: '1.5', borderRadius: 0 }}
+                  autoFocus
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSaveBody}
+                    disabled={savingBody || !editBodyText.trim()}
+                    className="font-display tracking-[-0.047em] text-xs text-canvas-white bg-ink-black px-3 py-1 border-none cursor-pointer hover:bg-graphite disabled:opacity-50"
+                  >
+                    {savingBody ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    onClick={() => setEditingBody(false)}
+                    className="font-display tracking-[-0.047em] text-xs text-ink-black px-3 py-1 border border-pale-ash bg-transparent cursor-pointer hover:border-ink-black"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <RichTextBody json={annotation.body} />
+                {user?.id === annotation.author_id && (
+                  <button
+                    onClick={handleEditBodyOpen}
+                    className="font-body text-pale-ash text-xs bg-transparent border-none cursor-pointer p-0 mt-1 hover:text-ink-black"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Author + vote count */}
@@ -438,27 +544,48 @@ export default function AnnotationSidebar({
             </span>
           </div>
 
-          {/* Vote buttons */}
-          {user && (
-            <div className="flex gap-2 mb-4">
-              <button
-                onClick={() => handleVote(1)}
-                className={[
-                  'font-display tracking-[-0.047em] text-xs px-3 py-1 border border-ink-black cursor-pointer bg-transparent hover:bg-ink-black hover:text-canvas-white',
-                  userVote === 1 ? 'bg-ink-black text-canvas-white' : 'text-ink-black',
-                ].join(' ')}
-              >
-                ▲ Upvote
-              </button>
-              <button
-                onClick={() => handleVote(-1)}
-                className={[
-                  'font-display tracking-[-0.047em] text-xs px-3 py-1 border border-ink-black cursor-pointer bg-transparent hover:bg-ink-black hover:text-canvas-white',
-                  userVote === -1 ? 'bg-ink-black text-canvas-white' : 'text-ink-black',
-                ].join(' ')}
-              >
-                ▼ Downvote
-              </button>
+          {/* Vote buttons — always visible; guests are prompted to sign in */}
+          <div className="flex gap-2 mb-4">
+            <button
+              onClick={() => user ? handleVote(1) : setShowSignInPrompt(true)}
+              className={[
+                'font-display tracking-[-0.047em] text-xs px-3 py-1 border border-ink-black cursor-pointer bg-transparent hover:bg-ink-black hover:text-canvas-white',
+                userVote === 1 ? 'bg-ink-black text-canvas-white' : 'text-ink-black',
+              ].join(' ')}
+            >
+              ▲ Upvote
+            </button>
+            <button
+              onClick={() => user ? handleVote(-1) : setShowSignInPrompt(true)}
+              className={[
+                'font-display tracking-[-0.047em] text-xs px-3 py-1 border border-ink-black cursor-pointer bg-transparent hover:bg-ink-black hover:text-canvas-white',
+                userVote === -1 ? 'bg-ink-black text-canvas-white' : 'text-ink-black',
+              ].join(' ')}
+            >
+              ▼ Downvote
+            </button>
+          </div>
+
+          {/* Sign-in prompt for guests who click a vote button */}
+          {showSignInPrompt && (
+            <div className="border border-pale-ash p-3 mb-3 flex flex-col gap-2">
+              <p className="font-body text-ink-black" style={{ fontSize: '12px' }}>
+                Sign in to vote on annotations.
+              </p>
+              <div className="flex gap-2">
+                <Link
+                  href="/login"
+                  className="font-display text-xs tracking-[-0.047em] text-canvas-white bg-ink-black px-3 py-1 no-underline hover:bg-graphite"
+                >
+                  Sign in
+                </Link>
+                <button
+                  onClick={() => setShowSignInPrompt(false)}
+                  className="font-body text-xs text-pale-ash bg-transparent border-none cursor-pointer p-0 hover:text-ink-black"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           )}
 

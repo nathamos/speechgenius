@@ -4,7 +4,6 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { getSelectionOffsets } from '@/lib/annotations/range-utils'
 import HighlightToolbar from '@/components/speech/HighlightToolbar'
 import AnnotationForm from '@/components/speech/AnnotationForm'
-import type { Tables } from '@/lib/supabase/types'
 import type { User } from '@supabase/supabase-js'
 import type { AnnotationWithVotes } from '@/app/weddings/[weddingSlug]/speeches/[speechSlug]/page'
 
@@ -18,18 +17,15 @@ interface ToolbarState {
 }
 
 interface TranscriptViewProps {
-  stanzas: Tables<'speech_stanzas'>[]
   annotations: AnnotationWithVotes[]
   transcriptString: string
   user: User | null
   speechId: string
   onAnnotationClick: (annotationId: string) => void
+  onAnnotationCreated: (annotation: AnnotationWithVotes) => void
   activeAnnotationId: string | null
 }
 
-// ---------------------------------------------------------------------------
-// AnnotatedSpan — a clickable highlighted range
-// ---------------------------------------------------------------------------
 function AnnotatedSpan({
   text,
   annotationId,
@@ -55,145 +51,43 @@ function AnnotatedSpan({
   )
 }
 
-// ---------------------------------------------------------------------------
-// StanzaBlock — splits one stanza into plain + annotated segments
-// ---------------------------------------------------------------------------
-interface StanzaBlockProps {
-  stanza: Tables<'speech_stanzas'>
-  // Local offsets for this stanza (pre-computed by TranscriptView)
-  localAnnotations: Array<{
-    annotationId: string
-    localStart: number
-    localEnd: number
-  }>
-  activeAnnotationId: string | null
-  onAnnotationClick: (id: string) => void
-}
+type Segment =
+  | { type: 'plain'; text: string }
+  | { type: 'annotated'; text: string; annotationId: string }
 
-function StanzaBlock({
-  stanza,
-  localAnnotations,
-  activeAnnotationId,
-  onAnnotationClick,
-}: StanzaBlockProps) {
-  const body = stanza.body
-
-  // Build sorted, non-overlapping segments
-  const sorted = [...localAnnotations].sort((a, b) => a.localStart - b.localStart)
-
-  type Segment =
-    | { type: 'plain'; text: string }
-    | { type: 'annotated'; text: string; annotationId: string }
-
+function buildSegments(transcriptString: string, annotations: AnnotationWithVotes[]): Segment[] {
+  const sorted = [...annotations].sort((a, b) => a.char_start - b.char_start)
   const segments: Segment[] = []
   let cursor = 0
 
   for (const ann of sorted) {
-    const { localStart, localEnd, annotationId } = ann
-    if (localStart > cursor) {
-      segments.push({ type: 'plain', text: body.slice(cursor, localStart) })
+    if (ann.char_start > cursor) {
+      segments.push({ type: 'plain', text: transcriptString.slice(cursor, ann.char_start) })
     }
-    if (localEnd > localStart) {
+    if (ann.char_end > ann.char_start) {
       segments.push({
         type: 'annotated',
-        text: body.slice(localStart, localEnd),
-        annotationId,
+        text: transcriptString.slice(ann.char_start, ann.char_end),
+        annotationId: ann.id,
       })
     }
-    cursor = Math.max(cursor, localEnd)
+    cursor = Math.max(cursor, ann.char_end)
   }
 
-  if (cursor < body.length) {
-    segments.push({ type: 'plain', text: body.slice(cursor) })
+  if (cursor < transcriptString.length) {
+    segments.push({ type: 'plain', text: transcriptString.slice(cursor) })
   }
 
-  // Render each segment; within plain segments, render \n as block spans
-  function renderText(text: string, keyPrefix: string) {
-    const lines = text.split('\n')
-    return lines.map((line, i) => (
-      <span key={`${keyPrefix}-${i}`} className={i < lines.length - 1 ? 'block' : undefined}>
-        {line}
-      </span>
-    ))
-  }
-
-  return (
-    <p
-      className="font-body text-ink-black mb-8"
-      style={{ fontSize: '18px', lineHeight: '1.75' }}
-    >
-      {segments.map((seg, i) => {
-        if (seg.type === 'plain') {
-          return (
-            <span key={i}>
-              {renderText(seg.text, `plain-${i}`)}
-            </span>
-          )
-        }
-        return (
-          <AnnotatedSpan
-            key={`ann-${seg.annotationId}-${i}`}
-            text={seg.text}
-            annotationId={seg.annotationId}
-            isActive={activeAnnotationId === seg.annotationId}
-            onClick={onAnnotationClick}
-          />
-        )
-      })}
-    </p>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Main TranscriptView
-// ---------------------------------------------------------------------------
-
-/**
- * Maps global char offsets to per-stanza local offsets for rendering.
- * Returns a list of { stanzaId, localStart, localEnd, annotationId }.
- */
-function computeLocalAnnotations(
-  stanzas: Tables<'speech_stanzas'>[],
-  annotations: AnnotationWithVotes[]
-): Map<string, Array<{ annotationId: string; localStart: number; localEnd: number }>> {
-  const sorted = [...stanzas].sort((a, b) => a.position - b.position)
-  const result = new Map<string, Array<{ annotationId: string; localStart: number; localEnd: number }>>()
-
-  for (const stanza of sorted) {
-    result.set(stanza.id, [])
-  }
-
-  for (const ann of annotations) {
-    let cursor = 0
-    for (const stanza of sorted) {
-      const stanzaStart = cursor
-      const stanzaEnd = cursor + stanza.body.length
-
-      if (ann.char_end <= stanzaStart) break
-      if (ann.char_start < stanzaEnd) {
-        const localStart = Math.max(0, ann.char_start - stanzaStart)
-        const localEnd = Math.min(stanza.body.length, ann.char_end - stanzaStart)
-        result.get(stanza.id)!.push({
-          annotationId: ann.id,
-          localStart,
-          localEnd,
-        })
-      }
-
-      cursor = stanzaEnd + 2 // accounts for \n\n separator
-    }
-  }
-
-  return result
+  return segments
 }
 
 export default function TranscriptView({
-  stanzas,
   annotations,
   transcriptString,
   user,
   speechId,
   onAnnotationClick,
+  onAnnotationCreated,
   activeAnnotationId,
 }: TranscriptViewProps) {
   const transcriptRef = useRef<HTMLDivElement>(null)
@@ -205,7 +99,6 @@ export default function TranscriptView({
     selectedText: string
   } | null>(null)
 
-  // Close toolbar when annotation form opens
   const openAnnotationForm = useCallback(() => {
     if (!toolbarState) return
     setPendingOffsets({
@@ -215,17 +108,33 @@ export default function TranscriptView({
     })
     setAnnotationFormOpen(true)
     setToolbarState(null)
-    // Clear selection
     window.getSelection()?.removeAllRanges()
   }, [toolbarState])
 
   const handleAnnotationSubmitted = useCallback(
     (newAnnotationId: string) => {
       setAnnotationFormOpen(false)
+      // Optimistically add the new annotation so the highlight appears immediately
+      if (pendingOffsets && user) {
+        onAnnotationCreated({
+          id: newAnnotationId,
+          speech_id: speechId,
+          author_id: user.id,
+          char_start: pendingOffsets.start,
+          char_end: pendingOffsets.end,
+          selected_text: pendingOffsets.selectedText,
+          body: null,
+          media_url: null,
+          upvotes: 0,
+          status: 'live',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          votes: [],
+        })
+      }
       setPendingOffsets(null)
-      onAnnotationClick(newAnnotationId)
     },
-    [onAnnotationClick]
+    [pendingOffsets, user, speechId, onAnnotationCreated]
   )
 
   const handleClaimedClick = useCallback(() => {
@@ -257,7 +166,6 @@ export default function TranscriptView({
         return
       }
 
-      // Check for overlap with existing annotations (client-side pre-check)
       const overlappingAnn = annotations.find(
         (a) => a.char_start < offsets.end && a.char_end > offsets.start
       )
@@ -274,7 +182,6 @@ export default function TranscriptView({
         return
       }
 
-      // Only show "Annotate" if user is logged in
       if (!user) {
         setToolbarState(null)
         return
@@ -287,29 +194,37 @@ export default function TranscriptView({
     return () => document.removeEventListener('selectionchange', handleSelectionChange)
   }, [annotations, transcriptString, user])
 
-  const localAnnotationsMap = computeLocalAnnotations(stanzas, annotations)
-  const sortedStanzas = [...stanzas].sort((a, b) => a.position - b.position)
+  const segments = buildSegments(transcriptString, annotations)
 
   return (
     <>
-      <div ref={transcriptRef} className="flex-1 px-10 py-8 bg-canvas-white min-w-0">
-        {sortedStanzas.length === 0 ? (
-          <p
-            className="font-body text-pale-ash text-center"
-            style={{ fontSize: '18px', lineHeight: '1.75' }}
-          >
-            This speech has no transcript yet.
-          </p>
+      {/*
+        white-space: pre-wrap means \n in text nodes renders as a line break,
+        and \n\n renders as a blank line — matching how the transcript was typed.
+        Critically, Range.toString() on these text nodes includes the \n characters,
+        so getSelectionOffsets() produces offsets consistent with transcriptString.
+      */}
+      <div
+        ref={transcriptRef}
+        className="flex-1 px-10 py-8 bg-canvas-white min-w-0 font-body text-ink-black"
+        style={{ fontSize: '18px', lineHeight: '1.75', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+      >
+        {transcriptString.length === 0 ? (
+          <span className="text-pale-ash">This speech has no transcript yet.</span>
         ) : (
-          sortedStanzas.map((stanza) => (
-            <StanzaBlock
-              key={stanza.id}
-              stanza={stanza}
-              localAnnotations={localAnnotationsMap.get(stanza.id) ?? []}
-              activeAnnotationId={activeAnnotationId}
-              onAnnotationClick={onAnnotationClick}
-            />
-          ))
+          segments.map((seg, i) =>
+            seg.type === 'plain' ? (
+              <span key={i}>{seg.text}</span>
+            ) : (
+              <AnnotatedSpan
+                key={i}
+                text={seg.text}
+                annotationId={seg.annotationId}
+                isActive={activeAnnotationId === seg.annotationId}
+                onClick={onAnnotationClick}
+              />
+            )
+          )
         )}
       </div>
 

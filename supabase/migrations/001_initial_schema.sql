@@ -9,9 +9,11 @@ create table profiles (
 );
 
 create or replace function handle_new_user()
-returns trigger language plpgsql security definer as $$
+returns trigger language plpgsql security definer
+set search_path = public
+as $$
 begin
-  insert into profiles (id) values (new.id);
+  insert into public.profiles (id) values (new.id);
   return new;
 end;
 $$;
@@ -315,3 +317,6 @@ create policy "comments_insert" on annotation_comments for insert with check (
   )
 );
 create policy "comments_update" on annotation_comments for update using (author_id = auth.uid());
+
+-- Allow any authenticated user to create a wedding
+create policy "weddings_insert" on weddings for insert with check (auth.uid() is not null);

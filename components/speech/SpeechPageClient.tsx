@@ -3,12 +3,10 @@
 import { useState } from 'react'
 import TranscriptView from '@/components/speech/TranscriptView'
 import AnnotationSidebar from '@/components/speech/AnnotationSidebar'
-import type { Tables } from '@/lib/supabase/types'
 import type { User } from '@supabase/supabase-js'
 import type { AnnotationWithVotes } from '@/app/weddings/[weddingSlug]/speeches/[speechSlug]/page'
 
 interface SpeechPageClientProps {
-  stanzas: Tables<'speech_stanzas'>[]
   annotations: AnnotationWithVotes[]
   transcriptString: string
   user: User | null
@@ -16,16 +14,17 @@ interface SpeechPageClientProps {
 }
 
 export default function SpeechPageClient({
-  stanzas,
-  annotations,
+  annotations: initialAnnotations,
   transcriptString,
   user,
   speechId,
 }: SpeechPageClientProps) {
+  const [annotations, setAnnotations] = useState(initialAnnotations)
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
 
-  function handleAnnotationClick(annotationId: string) {
-    setActiveAnnotationId(annotationId)
+  function handleAnnotationCreated(annotation: AnnotationWithVotes) {
+    setAnnotations((prev) => [...prev, annotation])
+    setActiveAnnotationId(annotation.id)
   }
 
   function handleSidebarClose() {
@@ -35,12 +34,12 @@ export default function SpeechPageClient({
   return (
     <div className="flex">
       <TranscriptView
-        stanzas={stanzas}
         annotations={annotations}
         transcriptString={transcriptString}
         user={user}
         speechId={speechId}
-        onAnnotationClick={handleAnnotationClick}
+        onAnnotationCreated={handleAnnotationCreated}
+        onAnnotationClick={setActiveAnnotationId}
         activeAnnotationId={activeAnnotationId}
       />
       <AnnotationSidebar
